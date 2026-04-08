@@ -1,46 +1,38 @@
 # gemini-proofread-hook
 
-A Claude Code hook that proofreads your prompts using Gemini in the background,
-then shows suggestions after Claude responds — without blocking or affecting Claude's context.
+A Claude Code hook that proofreads your prompts using Gemini before Claude sees them,
+injecting corrections as a system message into Claude's context.
 
 ## How It Works
 
-```
+```text
 You type a prompt
        │
        ▼
-[submit] parses it, spawns [worker] as detached process, exits immediately
+[gemini_hook] reads hook JSON from stdin, calls Gemini API
        │
        ▼
-Claude responds normally (worker is calling Gemini in parallel)
+Gemini returns proofread/improved text
        │
        ▼
-[stop] checks if worker finished, prints suggestion to stderr
+[gemini_hook] outputs { "systemMessage": "..." } to stdout
+       │
+       ▼
+Claude Code injects the system message before Claude responds
 ```
 
-## Design Rationale
-
-- **Non-blocking**: `submit` exits in milliseconds. Gemini's free tier is slow (~3–10s);
-  making the hook wait would freeze Claude Code on every prompt.
-- **Detached child process for worker**: a background thread inside `submit` would be
-  killed when `submit` exits. A separate binary survives independently.
-- **stderr only**: Claude Code injects hook stdout into Claude's context. stderr goes to
-  the terminal only — proofread suggestions never influence Claude's responses.
-- **Done-flag pattern**: `worker` writes the result file first, then the `.done` flag.
-  `stop` only reads after seeing the flag, avoiding partial-read race conditions.
-- **Silent skip**: if Gemini isn't done by the time `stop` runs, the result is discarded
-  rather than blocking the terminal.
+Prompts starting with `/` (slash commands) are passed through unchanged.
 
 ## Gemini API
 
-- **Model**: `gemini-3-flash-preview`
-- **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`
+- **Model**: `gemini-3.1-flash-lite-preview` (default, configurable via `--model`)
+- **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 - **Auth**: `x-goog-api-key` header with `$GEMINI_API_KEY`
 
-Example request (see `gemini_test.sh`):
+Example request:
 
 ```sh
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
@@ -54,63 +46,52 @@ curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-pre
   }'
 ```
 
-Example response (see `response.json`):
+The useful field in the response is `candidates[0].content.parts[0].text`. The `thoughtSignature`
+field is an internal reasoning trace from the model and should be ignored.
 
-```json
-{
-  "candidates": [
-    {
-      "content": {
-        "parts": [
-          {
-            "text": "AI processes vast amounts of data to recognize patterns and make predictions.",
-            "thoughtSignature": "<internal reasoning trace — ignore this field>"
-          }
-        ],
-        "role": "model"
-      },
-      "finishReason": "STOP"
-    }
-  ],
-  "modelVersion": "gemini-3-flash-preview"
-}
+## Binary
+
+A single binary `gemini_hook` handles the `UserPromptSubmit` hook event.
+
+### Flags
+
+| Flag                        | Env              | Default                         | Description                                     |
+| --------------------------- | ---------------- | ------------------------------- | ----------------------------------------------- |
+| `--gemini-api-key`          | `GEMINI_API_KEY` | (required)                      | Gemini API key                                  |
+| `--model`                   | —                | `gemini-3.1-flash-lite-preview` | Gemini model to use                             |
+| `--system-instruction-file` | —                | (none)                          | Path to a file with a custom system instruction |
+
+## Installation
+
+Use `install.sh` to build, install the binary, and configure Claude Code in one step:
+
+```sh
+export GEMINI_API_KEY=your_api_key_here
+./install.sh --system-instruction-file /path/to/instruction.txt [--model gemini-3.1-flash-lite-preview]
 ```
 
-The useful field is `candidates[0].content.parts[0].text`. The `thoughtSignature` is an
-internal reasoning trace from the model and should be ignored.
+The script:
+1. Builds the release binary with `cargo build --release`
+2. Copies it to `~/.local/bin/gemini_hook`
+3. Updates `~/.claude/settings.json` to register the `UserPromptSubmit` hook
 
-## Binaries
+Requires: `cargo`, `jq`
 
-| Binary | Hook event | Role |
-|--------|-----------|------|
-| `submit` | `UserPromptSubmit` | Parse stdin, spawn `worker`, exit 0 immediately |
-| `worker` | (none — detached) | Call Gemini API, write result + done flag to `/tmp` |
-| `stop` | `Stop` | Check done flag, print result to stderr, clean up |
-
-## Temp Files
-
-| Path | Purpose |
-|------|---------|
-| `/tmp/proofread-{session_id}` | Gemini result text |
-| `/tmp/proofread-{session_id}.done` | Written last; signals result is fully ready |
-
-## Claude Code Settings
+### Resulting hook entry in `settings.json`
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
       {
-        "type": "command",
-        "command": "/path/to/submit",
-        "timeout": 5
-      }
-    ],
-    "Stop": [
-      {
-        "type": "command",
-        "command": "/path/to/stop",
-        "timeout": 5
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "statusMessage": "Proofreading...",
+            "command": "~/.local/bin/gemini_hook --system-instruction-file /path/to/instruction.txt --model gemini-3.1-flash-lite-preview"
+          }
+        ]
       }
     ]
   }
