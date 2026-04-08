@@ -1,11 +1,11 @@
 use chrono::Utc;
 use clap::Parser;
 use serde_json::{json, Value};
-use std::path::Path;
-use std::process;
 use std::{
     fs,
     io::{self, Read},
+    path::Path,
+    process,
 };
 
 #[derive(Parser)]
@@ -51,15 +51,16 @@ fn main() {
     };
     let prompt = prompt.trim();
 
-    if should_skip_prompt(prompt) {
-        return;
-    }
+    let effective_prompt = match classify_prompt(prompt) {
+        PromptAction::Skip => return,
+        PromptAction::Process(p) => p,
+    };
 
     let result = call_gemini(
         &cli.gemini_api_key,
         &cli.model,
         system_instruction.as_deref(),
-        prompt,
+        effective_prompt,
     );
     let is_err = result.is_err();
     let message = match result {
@@ -80,8 +81,25 @@ fn main() {
     }
 }
 
-fn should_skip_prompt(prompt: &str) -> bool {
-    prompt.starts_with('/')
+enum PromptAction<'a> {
+    Process(&'a str),
+    Skip,
+}
+
+fn classify_prompt(prompt: &str) -> PromptAction<'_> {
+    if !prompt.starts_with('/') {
+        return PromptAction::Process(prompt);
+    }
+    // Find the first whitespace after the command token
+    let Some(pos) = prompt.find(char::is_whitespace) else {
+        return PromptAction::Skip;
+    };
+    let rest = prompt[pos..].trim_start();
+    if rest.is_empty() {
+        PromptAction::Skip
+    } else {
+        PromptAction::Process(rest)
+    }
 }
 
 fn save_log(log_dir: &str, session_id: &str, message: &str) {
