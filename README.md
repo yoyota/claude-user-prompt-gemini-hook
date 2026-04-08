@@ -3,6 +3,58 @@
 A Claude Code hook that proofreads your prompts using Gemini before Claude sees them,
 injecting corrections as a system message into Claude's context.
 
+## TLDR
+
+In this example, the hook is configured as an **English coaching assistant** — it gives grammar
+feedback and natural phrasing suggestions before Claude processes the request. You can swap in
+any system instruction you like (proofreading, translation, tone adjustment, etc.).
+
+```text
+❯ Write python hello world program
+
+  ⎿  UserPromptSubmit says:
+
+     ### User:
+
+     Write python hello world program
+
+     ---
+
+     As an English language coach, I will help you refine your communication for
+     professional technical environments. Since your input was a request for code,
+     I have framed your intent as a formal inquiry.
+
+     ---
+
+     ### Natural English Version
+
+     "Could you provide a canonical 'Hello World' implementation in Python?
+     I am looking to establish a baseline for my environment."
+
+     ### Grammar Correction
+
+     - **Original:** "Write python hello world program"
+     - **Correction:** The original lacks an article ("a") and proper
+       capitalization ("Python"). In professional English, imperative sentences
+       ("Write...") can come across as demanding. Using a polite modal verb like
+       "Could" or stating your intent ("I am looking to...") is preferred.
+     - **Korean Speaker Note:** Korean often omits articles (a/the). In English
+       technical documentation and professional communication, articles are
+       essential for clarity. Also, "program" is a countable noun, so it
+       requires an article ("a program").
+
+● Write(/tmp/hello_world.py)
+  ⎿  Wrote 1 lines to /tmp/hello_world.py
+      1 print("Hello, World!")
+
+● Created /tmp/hello_world.py with a simple hello world program. Run it with:
+
+  python /tmp/hello_world.py
+
+  Output:
+  Hello, World!
+```
+
 ## How It Works
 
 ```text
@@ -22,6 +74,20 @@ Claude Code injects the system message before Claude responds
 ```
 
 Prompts starting with `/` (slash commands) are passed through unchanged.
+
+### Claude's context is not affected
+
+The hook outputs a `systemMessage` JSON field:
+
+```json
+{ "systemMessage": "### Natural English Version\n..." }
+```
+
+This appears as the `⎿ UserPromptSubmit says: ...` annotation you see in the terminal — it is
+**only a UI display**, not additional context injected into Claude. Claude receives your original
+prompt exactly as typed, with nothing prepended, appended, or modified.
+
+Gemini's feedback is for you, not for Claude.
 
 ## Gemini API
 
@@ -71,6 +137,7 @@ export GEMINI_API_KEY=your_api_key_here
 ```
 
 The script:
+
 1. Builds the release binary with `cargo build --release`
 2. Copies it to `~/.local/bin/gemini_hook`
 3. Updates `~/.claude/settings.json` to register the `UserPromptSubmit` hook
