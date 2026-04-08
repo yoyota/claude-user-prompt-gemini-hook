@@ -46,7 +46,7 @@ fn main() {
     };
 
     let Some(prompt) = hook["prompt"].as_str() else {
-        eprintln!("Prompt is empty");
+        eprintln!("Missing or non-string prompt field");
         return;
     };
     let prompt = prompt.trim();
