@@ -65,16 +65,15 @@ fn main() {
         Ok(s) => s.clone(),
         Err(e) => e.to_string(),
     };
-    if let (Some(log_dir), Some(session_id)) = (
-        cli.log_dir.as_deref(),
-        hook["session_id"].as_str(),
-    ) {
-        save_log(log_dir, session_id, &message);
-    }
     println!(
-        "\n{}",
+        "{}",
         json!({ "suppressOutput": false, "systemMessage": message })
     );
+    if let (Some(log_dir), Some(session_id)) =
+        (cli.log_dir.as_deref(), hook["session_id"].as_str())
+    {
+        save_log(log_dir, session_id, &message);
+    }
     if result.is_err() {
         process::exit(1);
     }
