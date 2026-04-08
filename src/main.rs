@@ -15,6 +15,10 @@ struct Cli {
     /// Gemini API key
     #[arg(long, env = "GEMINI_API_KEY")]
     gemini_api_key: String,
+
+    /// Gemini model to use
+    #[arg(long, default_value = "gemini-3.1-flash-lite-preview")]
+    model: String,
 }
 
 fn main() {
@@ -45,31 +49,32 @@ fn main() {
         return;
     }
 
-    let (message, is_err) = match call_gemini(
+    let result = call_gemini(
         &cli.gemini_api_key,
+        &cli.model,
         system_instruction.as_deref(),
         prompt,
-    ) {
-        Ok(result) => (result, false),
-        Err(e) => (e.to_string(), true),
+    );
+    let message = match &result {
+        Ok(s) => s.clone(),
+        Err(e) => e.to_string(),
     };
     println!(
         "\n{}",
         json!({ "suppressOutput": false, "systemMessage": message })
     );
-    if is_err {
+    if result.is_err() {
         process::exit(1);
     }
 }
 
 fn call_gemini(
     api_key: &str,
+    model: &str,
     system_instruction: Option<&str>,
     prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    // let model = "gemini-3-flash-preview";
-    let model = "gemini-3.1-flash-lite-preview";
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",model);
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model);
 
     let mut body = json!({
         "contents": [{ "parts": [{ "text": prompt }] }]
@@ -83,18 +88,16 @@ fn call_gemini(
         .set("x-goog-api-key", api_key)
         .set("Content-Type", "application/json")
         .send_json(body)
-        .map_err(|e| match e {
-            ureq::Error::Status(code, resp) => {
-                let body = resp.into_string().unwrap_or_default();
-                let message = serde_json::from_str::<Value>(&body)
-                    .ok()
-                    .and_then(|v| {
-                        v["error"]["message"].as_str().map(|s| s.to_string())
-                    })
-                    .unwrap_or(body);
-                format!("HTTP {code}: {message}").into()
-            }
-            other => Box::new(other) as Box<dyn std::error::Error>,
+        .map_err(|e| -> Box<dyn std::error::Error> {
+            let ureq::Error::Status(code, resp) = e else {
+                return Box::new(e);
+            };
+            let body = resp.into_string().unwrap_or_default();
+            let message = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+                .unwrap_or(body);
+            format!("HTTP {code}: {message}").into()
         })?;
 
     let response: Value = http_response.into_json()?;

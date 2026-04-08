@@ -2,14 +2,16 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 --system-instruction-file <path>"
+  echo "Usage: $0 --system-instruction-file <path> [--model <model>]"
   exit 1
 }
 
 SYSTEM_INSTRUCTION_FILE=""
+MODEL="gemini-3.1-flash-lite-preview"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --system-instruction-file) SYSTEM_INSTRUCTION_FILE="$2"; shift 2 ;;
+    --model) MODEL="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -31,7 +33,7 @@ cp "$SCRIPT_DIR/target/release/gemini_hook" "$INSTALL_DIR/gemini_hook"
 echo "Installed: $INSTALL_DIR/gemini_hook"
 
 # 3. Update settings.json hooks
-COMMAND="$INSTALL_DIR/gemini_hook --system-instruction-file $SYSTEM_INSTRUCTION_FILE"
+COMMAND="$INSTALL_DIR/gemini_hook --system-instruction-file $SYSTEM_INSTRUCTION_FILE --model $MODEL"
 
 HOOK_ENTRY=$(jq -n --arg cmd "$COMMAND" \
   '[{"matcher": "", "hooks": [{"type": "command", "statusMessage": "Proofreading...", "command": $cmd}]}]')
