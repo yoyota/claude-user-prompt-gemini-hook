@@ -1,5 +1,7 @@
+use chrono::Utc;
 use clap::Parser;
 use serde_json::{json, Value};
+use std::path::Path;
 use std::process;
 use std::{
     fs,
@@ -7,7 +9,7 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(about = "Gemini proofreading hook for Claude Code")]
+#[command(about = "Gemini hook for Claude Code")]
 struct Cli {
     #[arg(long)]
     system_instruction_file: Option<String>,
@@ -19,6 +21,10 @@ struct Cli {
     /// Gemini model to use
     #[arg(long, default_value = "gemini-3.1-flash-lite-preview")]
     model: String,
+
+    /// Directory to save log files (optional; skipped if path does not exist)
+    #[arg(long)]
+    log_dir: Option<String>,
 }
 
 fn main() {
@@ -59,6 +65,12 @@ fn main() {
         Ok(s) => s.clone(),
         Err(e) => e.to_string(),
     };
+    if let (Some(log_dir), Some(session_id)) = (
+        cli.log_dir.as_deref(),
+        hook["session_id"].as_str(),
+    ) {
+        save_log(log_dir, session_id, &message);
+    }
     println!(
         "\n{}",
         json!({ "suppressOutput": false, "systemMessage": message })
@@ -66,6 +78,16 @@ fn main() {
     if result.is_err() {
         process::exit(1);
     }
+}
+
+fn save_log(log_dir: &str, session_id: &str, message: &str) {
+    let path = Path::new(log_dir);
+    if !path.is_dir() {
+        return;
+    }
+    let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
+    let filename = format!("{session_id}_{timestamp}.txt");
+    let _ = fs::write(path.join(filename), message);
 }
 
 fn call_gemini(
