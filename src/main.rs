@@ -51,7 +51,7 @@ fn main() {
     };
     let prompt = prompt.trim();
 
-    if prompt.starts_with('/') {
+    if should_skip_prompt(prompt) {
         return;
     }
 
@@ -61,8 +61,9 @@ fn main() {
         system_instruction.as_deref(),
         prompt,
     );
-    let message = match &result {
-        Ok(s) => s.clone(),
+    let is_err = result.is_err();
+    let message = match result {
+        Ok(s) => s,
         Err(e) => e.to_string(),
     };
     println!(
@@ -74,9 +75,13 @@ fn main() {
     {
         save_log(log_dir, session_id, &message);
     }
-    if result.is_err() {
+    if is_err {
         process::exit(1);
     }
+}
+
+fn should_skip_prompt(prompt: &str) -> bool {
+    prompt.starts_with('/')
 }
 
 fn save_log(log_dir: &str, session_id: &str, message: &str) {
@@ -89,21 +94,41 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
     let _ = fs::write(path.join(filename), message);
 }
 
+fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
+    let mut body = json!({
+        "contents": [{ "parts": [{ "text": prompt }] }]
+    });
+    if let Some(instruction) = system_instruction {
+        body["systemInstruction"] = json!({ "parts": [{ "text": instruction }] });
+    }
+    body
+}
+
+fn parse_gemini_response(response: &Value) -> Result<&str, &'static str> {
+    response["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .ok_or("unexpected response shape")
+}
+
+fn extract_api_error_message(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+        .unwrap_or_else(|| body.to_string())
+}
+
 fn call_gemini(
     api_key: &str,
     model: &str,
     system_instruction: Option<&str>,
     prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent", model);
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+        model
+    );
 
-    let mut body = json!({
-        "contents": [{ "parts": [{ "text": prompt }] }]
-    });
-    if let Some(instruction) = system_instruction {
-        body["systemInstruction"] =
-            json!({ "parts": [{ "text": instruction }] });
-    }
+    let body = build_request_body(prompt, system_instruction);
 
     let http_response = ureq::post(&url)
         .set("x-goog-api-key", api_key)
@@ -114,21 +139,15 @@ fn call_gemini(
                 return Box::new(e);
             };
             let body = resp.into_string().unwrap_or_default();
-            let message = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|v| {
-                    v["error"]["message"].as_str().map(str::to_string)
-                })
-                .unwrap_or(body);
+            let message = extract_api_error_message(&body);
             format!("HTTP {code}: {message}").into()
         })?;
 
     let response: Value = http_response.into_json()?;
-
-    let text = response["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .ok_or("unexpected response shape")?
-        .to_string();
+    let text = parse_gemini_response(&response)?;
 
     Ok(format!("\n### User:\n\n{}\n\n{}", prompt, text))
 }
+
+#[cfg(test)]
+mod tests;
