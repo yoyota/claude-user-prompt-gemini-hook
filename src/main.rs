@@ -108,7 +108,7 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
         return;
     }
     let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
-    let filename = format!("{session_id}_{timestamp}.md");
+    let filename = format!("{timestamp}_{session_id}.md");
     let _ = fs::write(path.join(filename), message);
 }
 
@@ -117,7 +117,8 @@ fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
         "contents": [{ "parts": [{ "text": prompt }] }]
     });
     if let Some(instruction) = system_instruction {
-        body["systemInstruction"] = json!({ "parts": [{ "text": instruction }] });
+        body["systemInstruction"] =
+            json!({ "parts": [{ "text": instruction }] });
     }
     body
 }
