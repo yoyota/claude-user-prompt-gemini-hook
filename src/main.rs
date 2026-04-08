@@ -85,7 +85,7 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
         return;
     }
     let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
-    let filename = format!("{session_id}_{timestamp}.txt");
+    let filename = format!("{session_id}_{timestamp}.md");
     let _ = fs::write(path.join(filename), message);
 }
 
@@ -116,7 +116,9 @@ fn call_gemini(
             let body = resp.into_string().unwrap_or_default();
             let message = serde_json::from_str::<Value>(&body)
                 .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+                .and_then(|v| {
+                    v["error"]["message"].as_str().map(str::to_string)
+                })
                 .unwrap_or(body);
             format!("HTTP {code}: {message}").into()
         })?;
@@ -128,5 +130,5 @@ fn call_gemini(
         .ok_or("unexpected response shape")?
         .to_string();
 
-    Ok(text)
+    Ok(format!("\n### User:\n\n{}\n\n{}", prompt, text))
 }
