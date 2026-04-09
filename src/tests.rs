@@ -28,7 +28,8 @@ fn body_prompt_text_is_set() {
 
 #[test]
 fn parse_valid_response_returns_text() {
-    let resp = json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]});
+    let resp =
+        json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]});
     assert_eq!(parse_gemini_response(&resp), Ok("hello"));
 }
 
@@ -176,7 +177,9 @@ fn classify_empty_string_returns_process_empty() {
 #[test]
 fn classify_slash_command_long_param_returns_only_param_portion() {
     // Edge case: long param string -> Process returns only the param portion, not the command word
-    let result = classify_prompt("/refactor please rewrite this entire module to be idiomatic Rust");
+    let result = classify_prompt(
+        "/refactor please rewrite this entire module to be idiomatic Rust",
+    );
     assert!(matches!(
         result,
         PromptAction::Process(p)
@@ -188,4 +191,261 @@ fn classify_slash_command_long_param_returns_only_param_portion() {
 fn classify_bare_slash_returns_skip() {
     // Edge case: prompt is exactly "/" -> Skip
     assert!(matches!(classify_prompt("/"), PromptAction::Skip));
+}
+
+// --- GeminiError ---
+
+mod gemini_error {
+    use super::*;
+
+    #[test]
+    fn overloaded_variant_exists_and_matches() {
+        // GeminiError::Overloaded must exist and be matchable
+        let err = GeminiError::Overloaded;
+        assert!(matches!(err, GeminiError::Overloaded));
+    }
+
+    #[test]
+    fn other_variant_exists_and_wraps_error() {
+        // GeminiError::Other must exist, accept a Box<dyn Error>, and be matchable
+        let inner: Box<dyn std::error::Error> = "some error".into();
+        let err = GeminiError::Other(inner);
+        assert!(matches!(err, GeminiError::Other(_)));
+    }
+
+    #[test]
+    fn overloaded_does_not_match_other() {
+        let err = GeminiError::Overloaded;
+        assert!(!matches!(err, GeminiError::Other(_)));
+    }
+
+    #[test]
+    fn other_does_not_match_overloaded() {
+        let inner: Box<dyn std::error::Error> = "boom".into();
+        let err = GeminiError::Other(inner);
+        assert!(!matches!(err, GeminiError::Overloaded));
+    }
+}
+
+mod call_gemini_with_retry_tests {
+    use super::*;
+
+    #[test]
+    fn primary_model_called_first_on_success() {
+        // When the primary model succeeds, its result is returned directly.
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let call_count = Rc::new(Cell::new(0u32));
+        let call_count_clone = Rc::clone(&call_count);
+
+        let caller = move |_api_key: &str,
+                           model: &str,
+                           _system: Option<&str>,
+                           _prompt: &str|
+              -> Result<String, GeminiError> {
+            let n = call_count_clone.get();
+            call_count_clone.set(n + 1);
+            if model == "primary-model" {
+                Ok("primary response".to_string())
+            } else {
+                panic!(
+                    "fallback model must not be called when primary succeeds"
+                );
+            }
+        };
+
+        let result = call_gemini_with_retry(
+            "key",
+            "primary-model",
+            "fallback-model",
+            None,
+            "hello",
+            caller,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "primary response");
+        assert_eq!(call_count.get(), 1, "caller must be invoked exactly once");
+    }
+
+    #[test]
+    fn fallback_model_called_when_primary_returns_overloaded() {
+        // When the primary model returns GeminiError::Overloaded, the fallback
+        // model must be called immediately (no wait), and its result returned.
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        let models_called: Rc<RefCell<Vec<String>>> =
+            Rc::new(RefCell::new(vec![]));
+        let models_clone = Rc::clone(&models_called);
+
+        let caller = move |_api_key: &str,
+                           model: &str,
+                           _system: Option<&str>,
+                           _prompt: &str|
+              -> Result<String, GeminiError> {
+            models_clone.borrow_mut().push(model.to_string());
+            if model == "primary-model" {
+                Err(GeminiError::Overloaded)
+            } else {
+                Ok(format!("fallback response from {model}"))
+            }
+        };
+
+        let result = call_gemini_with_retry(
+            "key",
+            "primary-model",
+            "fallback-model",
+            None,
+            "hello",
+            caller,
+        );
+
+        assert!(result.is_ok(), "expected Ok but got {:?}", result);
+        assert_eq!(result.unwrap(), "fallback response from fallback-model");
+
+        let calls = models_called.borrow();
+        assert_eq!(
+            calls.len(),
+            2,
+            "exactly two calls expected: primary then fallback"
+        );
+        assert_eq!(calls[0], "primary-model");
+        assert_eq!(calls[1], "fallback-model");
+    }
+
+    #[test]
+    fn fallback_receives_same_api_key_and_prompt_as_primary() {
+        // The fallback call must forward the original api_key and prompt unchanged.
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        #[derive(Debug)]
+        struct CallArgs {
+            api_key: String,
+            model: String,
+            system: Option<String>,
+            prompt: String,
+        }
+
+        let calls: Rc<RefCell<Vec<CallArgs>>> = Rc::new(RefCell::new(vec![]));
+        let calls_clone = Rc::clone(&calls);
+
+        let caller = move |api_key: &str,
+                           model: &str,
+                           system: Option<&str>,
+                           prompt: &str|
+              -> Result<String, GeminiError> {
+            calls_clone.borrow_mut().push(CallArgs {
+                api_key: api_key.to_string(),
+                model: model.to_string(),
+                system: system.map(str::to_string),
+                prompt: prompt.to_string(),
+            });
+            if model == "primary" {
+                Err(GeminiError::Overloaded)
+            } else {
+                Ok("ok".to_string())
+            }
+        };
+
+        let _ = call_gemini_with_retry(
+            "my-api-key",
+            "primary",
+            "fallback",
+            Some("sys"),
+            "my prompt",
+            caller,
+        );
+
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 2);
+        // Fallback call must use the same api_key, system_instruction, and prompt
+        assert_eq!(calls[1].api_key, "my-api-key");
+        assert_eq!(calls[1].model, "fallback");
+        assert_eq!(calls[1].system.as_deref(), Some("sys"));
+        assert_eq!(calls[1].prompt, "my prompt");
+    }
+
+    #[test]
+    fn non_503_error_from_primary_fails_immediately_without_calling_fallback() {
+        // When the primary model returns GeminiError::Other, the wrapper must
+        // propagate the error immediately and never invoke the fallback model.
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let fallback_call_count = Rc::new(Cell::new(0u32));
+        let fallback_clone = Rc::clone(&fallback_call_count);
+
+        let caller = move |_api_key: &str,
+                           model: &str,
+                           _system: Option<&str>,
+                           _prompt: &str|
+              -> Result<String, GeminiError> {
+            if model == "primary-model" {
+                Err(GeminiError::Other("HTTP 400: bad request".into()))
+            } else {
+                fallback_clone.set(fallback_clone.get() + 1);
+                Ok("should not reach here".to_string())
+            }
+        };
+
+        let result = call_gemini_with_retry(
+            "key",
+            "primary-model",
+            "fallback-model",
+            None,
+            "hello",
+            caller,
+        );
+
+        assert!(result.is_err(), "expected Err but got Ok");
+        assert_eq!(
+            fallback_call_count.get(),
+            0,
+            "fallback must not be called on non-503 errors"
+        );
+    }
+
+    #[test]
+    fn error_propagated_when_fallback_also_fails() {
+        // If primary returns Overloaded and fallback also returns an error,
+        // the overall result must be Err.
+        let caller = |_api_key: &str,
+                      model: &str,
+                      _system: Option<&str>,
+                      _prompt: &str|
+         -> Result<String, GeminiError> {
+            if model == "primary" {
+                Err(GeminiError::Overloaded)
+            } else {
+                Err(GeminiError::Other("fallback also failed".into()))
+            }
+        };
+
+        let result = call_gemini_with_retry(
+            "key", "primary", "fallback", None, "hello", caller,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_fallback_model_in_cli_is_gemma_4_26b() {
+        // The --fallback-model CLI argument must default to "gemma-4-26b".
+        // We verify the default by parsing an args list that omits --fallback-model.
+        // Cli::try_parse_from is used to avoid process::exit on parse failure.
+        let cli = Cli::try_parse_from([
+            "gemini_hook",
+            "--gemini-api-key",
+            "test-key",
+        ])
+        .expect("parse must succeed with only required args");
+
+        assert_eq!(
+            cli.fallback_model, "gemma-4-26b",
+            "--fallback-model default must be \"gemma-4-26b\""
+        );
+    }
 }

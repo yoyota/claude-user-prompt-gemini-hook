@@ -2,6 +2,8 @@ use chrono::Utc;
 use clap::Parser;
 use serde_json::{json, Value};
 use std::{
+    error::Error,
+    fmt,
     fs,
     io::{self, Read},
     path::Path,
@@ -22,10 +24,31 @@ struct Cli {
     #[arg(long, default_value = "gemini-3.1-flash-lite-preview")]
     model: String,
 
+    /// Fallback Gemini model to use when primary is overloaded
+    #[arg(long, default_value = "gemma-4-26b")]
+    fallback_model: String,
+
     /// Directory to save log files (optional; skipped if path does not exist)
     #[arg(long)]
     log_dir: Option<String>,
 }
+
+#[derive(Debug)]
+enum GeminiError {
+    Overloaded,
+    Other(Box<dyn std::error::Error>),
+}
+
+impl fmt::Display for GeminiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GeminiError::Overloaded => write!(f, "Gemini model overloaded"),
+            GeminiError::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl Error for GeminiError {}
 
 fn main() {
     let cli = Cli::parse();
@@ -56,16 +79,17 @@ fn main() {
         PromptAction::Process(p) => p,
     };
 
-    let result = call_gemini(
+    let result = call_gemini_with_retry(
         &cli.gemini_api_key,
         &cli.model,
+        &cli.fallback_model,
         system_instruction.as_deref(),
         effective_prompt,
+        call_gemini,
     );
-    let is_err = result.is_err();
-    let message = match result {
-        Ok(s) => s,
-        Err(e) => e.to_string(),
+    let (message, is_err) = match result {
+        Ok(s) => (s, false),
+        Err(e) => (e.to_string(), true),
     };
     println!(
         "{}",
@@ -108,7 +132,7 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
         return;
     }
     let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
-    let filename = format!("{timestamp}_{session_id}.md");
+    let filename = format!("{session_id}_{timestamp}.md");
     let _ = fs::write(path.join(filename), message);
 }
 
@@ -141,7 +165,7 @@ fn call_gemini(
     model: &str,
     system_instruction: Option<&str>,
     prompt: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, GeminiError> {
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
         model
@@ -153,19 +177,42 @@ fn call_gemini(
         .set("x-goog-api-key", api_key)
         .set("Content-Type", "application/json")
         .send_json(body)
-        .map_err(|e| -> Box<dyn std::error::Error> {
+        .map_err(|e| {
             let ureq::Error::Status(code, resp) = e else {
-                return Box::new(e);
+                return GeminiError::Other(Box::new(e));
             };
+            if code == 503 {
+                return GeminiError::Overloaded;
+            }
             let body = resp.into_string().unwrap_or_default();
             let message = extract_api_error_message(&body);
-            format!("HTTP {code}: {message}").into()
+            GeminiError::Other(format!("HTTP {code}: {message}").into())
         })?;
 
-    let response: Value = http_response.into_json()?;
-    let text = parse_gemini_response(&response)?;
+    let response: Value = http_response
+        .into_json()
+        .map_err(|e| GeminiError::Other(Box::new(e)))?;
+    let text = parse_gemini_response(&response)
+        .map_err(|e| GeminiError::Other(e.into()))?;
 
     Ok(format!("\n### User:\n\n{}\n\n{}", prompt, text))
+}
+
+fn call_gemini_with_retry<F>(
+    api_key: &str,
+    model: &str,
+    fallback_model: &str,
+    system_instruction: Option<&str>,
+    prompt: &str,
+    caller: F,
+) -> Result<String, GeminiError>
+where
+    F: Fn(&str, &str, Option<&str>, &str) -> Result<String, GeminiError>,
+{
+    caller(api_key, model, system_instruction, prompt).or_else(|e| match e {
+        GeminiError::Overloaded => caller(api_key, fallback_model, system_instruction, prompt),
+        other => Err(other),
+    })
 }
 
 #[cfg(test)]
