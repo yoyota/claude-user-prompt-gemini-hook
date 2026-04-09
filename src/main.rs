@@ -80,12 +80,9 @@ fn main() {
     };
 
     let result = call_gemini_with_retry(
-        &cli.gemini_api_key,
         &cli.model,
         &cli.fallback_model,
-        system_instruction.as_deref(),
-        effective_prompt,
-        call_gemini,
+        |model| call_gemini(&cli.gemini_api_key, model, system_instruction.as_deref(), effective_prompt),
     );
     let (message, is_err) = match result {
         Ok(s) => (s, false),
@@ -177,42 +174,38 @@ fn call_gemini(
         .set("x-goog-api-key", api_key)
         .set("Content-Type", "application/json")
         .send_json(body)
-        .map_err(|e| {
-            let ureq::Error::Status(code, resp) = e else {
-                return GeminiError::Other(Box::new(e));
-            };
-            if code == 503 {
-                return GeminiError::Overloaded;
-            }
-            let body = resp.into_string().unwrap_or_default();
-            let message = extract_api_error_message(&body);
-            GeminiError::Other(format!("HTTP {code}: {message}").into())
-        })?;
+        .map_err(classify_ureq_error)?;
 
     let response: Value = http_response
         .into_json()
-        .map_err(|e| GeminiError::Other(Box::new(e)))?;
+        .map_err(|e| GeminiError::Other(e.into()))?;
     let text = parse_gemini_response(&response)
         .map_err(|e| GeminiError::Other(e.into()))?;
 
     Ok(format!("\n### User:\n\n{}\n\n{}", prompt, text))
 }
 
-fn call_gemini_with_retry<F>(
-    api_key: &str,
+fn classify_ureq_error(e: ureq::Error) -> GeminiError {
+    let ureq::Error::Status(code, resp) = e else {
+        return GeminiError::Other(Box::new(e));
+    };
+    if code == 503 {
+        return GeminiError::Overloaded;
+    }
+    let body = resp.into_string().unwrap_or_default();
+    let message = extract_api_error_message(&body);
+    GeminiError::Other(format!("HTTP {code}: {message}").into())
+}
+
+fn call_gemini_with_retry(
     model: &str,
     fallback_model: &str,
-    system_instruction: Option<&str>,
-    prompt: &str,
-    caller: F,
-) -> Result<String, GeminiError>
-where
-    F: Fn(&str, &str, Option<&str>, &str) -> Result<String, GeminiError>,
-{
-    caller(api_key, model, system_instruction, prompt).or_else(|e| match e {
-        GeminiError::Overloaded => caller(api_key, fallback_model, system_instruction, prompt),
-        other => Err(other),
-    })
+    call: impl Fn(&str) -> Result<String, GeminiError>,
+) -> Result<String, GeminiError> {
+    match call(model) {
+        Err(GeminiError::Overloaded) => call(fallback_model),
+        result => result,
+    }
 }
 
 #[cfg(test)]
