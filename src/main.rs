@@ -3,8 +3,7 @@ use clap::Parser;
 use serde_json::{json, Value};
 use std::{
     error::Error,
-    fmt,
-    fs,
+    fmt, fs,
     io::{self, Read},
     path::Path,
     process,
@@ -79,11 +78,14 @@ fn main() {
         PromptAction::Process(p) => p,
     };
 
-    let result = call_gemini_with_retry(
-        &cli.model,
-        &cli.fallback_model,
-        |model| call_gemini(&cli.gemini_api_key, model, system_instruction.as_deref(), effective_prompt),
-    );
+    let result = call_gemini_with_retry(&cli.model, &cli.fallback_model, |model| {
+        call_gemini(
+            &cli.gemini_api_key,
+            model,
+            system_instruction.as_deref(),
+            effective_prompt,
+        )
+    });
     let (message, is_err) = match result {
         Ok(s) => (s, false),
         Err(e) => (e.to_string(), true),
@@ -92,8 +94,7 @@ fn main() {
         "{}",
         json!({ "suppressOutput": false, "systemMessage": message })
     );
-    if let (Some(log_dir), Some(session_id)) =
-        (cli.log_dir.as_deref(), hook["session_id"].as_str())
+    if let (Some(log_dir), Some(session_id)) = (cli.log_dir.as_deref(), hook["session_id"].as_str())
     {
         save_log(log_dir, session_id, &message);
     }
@@ -138,8 +139,7 @@ fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
         "contents": [{ "parts": [{ "text": prompt }] }]
     });
     if let Some(instruction) = system_instruction {
-        body["systemInstruction"] =
-            json!({ "parts": [{ "text": instruction }] });
+        body["systemInstruction"] = json!({ "parts": [{ "text": instruction }] });
     }
     body
 }
@@ -179,10 +179,9 @@ fn call_gemini(
     let response: Value = http_response
         .into_json()
         .map_err(|e| GeminiError::Other(e.into()))?;
-    let text = parse_gemini_response(&response)
-        .map_err(|e| GeminiError::Other(e.into()))?;
+    let text = parse_gemini_response(&response).map_err(|e| GeminiError::Other(e.into()))?;
 
-    Ok(format!("\n### User:\n\n{}\n\n{}", prompt, text))
+    Ok(format_response(prompt, text, model))
 }
 
 fn classify_ureq_error(e: ureq::Error) -> GeminiError {
@@ -195,6 +194,10 @@ fn classify_ureq_error(e: ureq::Error) -> GeminiError {
     let body = resp.into_string().unwrap_or_default();
     let message = extract_api_error_message(&body);
     GeminiError::Other(format!("HTTP {code}: {message}").into())
+}
+
+fn format_response(prompt: &str, text: &str, model: &str) -> String {
+    format!("## User:\n\n#Gemini:\n< model\n\n: {prompt}{text}\n\n{model}")
 }
 
 fn call_gemini_with_retry(
