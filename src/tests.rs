@@ -28,8 +28,7 @@ fn body_prompt_text_is_set() {
 
 #[test]
 fn parse_valid_response_returns_text() {
-    let resp =
-        json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]});
+    let resp = json!({"candidates": [{"content": {"parts": [{"text": "hello"}]}}]});
     assert_eq!(parse_gemini_response(&resp), Ok("hello"));
 }
 
@@ -173,9 +172,8 @@ fn classify_empty_string_returns_process_empty() {
 #[test]
 fn classify_slash_command_long_param_returns_only_param_portion() {
     // Edge case: long param string -> Process returns only the param portion, not the command word
-    let result = classify_prompt(
-        "/refactor please rewrite this entire module to be idiomatic Rust",
-    );
+    let result =
+        classify_prompt("/refactor please rewrite this entire module to be idiomatic Rust");
     assert!(matches!(
         result,
         PromptAction::Process(p)
@@ -240,7 +238,7 @@ fn format_response_sections_appear_in_order() {
     let answer_pos = result.find("my answer").unwrap();
     let model_pos = result.find("my-model").unwrap();
     assert!(prompt_pos < answer_pos);
-    assert!(answer_pos < model_pos);
+    assert!(model_pos < answer_pos);
 }
 
 mod call_gemini_with_retry_tests {
@@ -256,7 +254,10 @@ mod call_gemini_with_retry_tests {
 
         let result = call_gemini_with_retry("primary-model", "fallback-model", |model| {
             call_count_clone.set(call_count_clone.get() + 1);
-            assert_eq!(model, "primary-model", "fallback must not be called on success");
+            assert_eq!(
+                model, "primary-model",
+                "fallback must not be called on success"
+            );
             Ok("primary response".to_string())
         });
 
@@ -304,7 +305,11 @@ mod call_gemini_with_retry_tests {
         });
 
         assert!(result.is_err());
-        assert_eq!(fallback_call_count.get(), 0, "fallback must not be called on non-503 errors");
+        assert_eq!(
+            fallback_call_count.get(),
+            0,
+            "fallback must not be called on non-503 errors"
+        );
     }
 
     #[test]
@@ -325,12 +330,8 @@ mod call_gemini_with_retry_tests {
         // The --fallback-model CLI argument must default to "gemma-4-26b".
         // We verify the default by parsing an args list that omits --fallback-model.
         // Cli::try_parse_from is used to avoid process::exit on parse failure.
-        let cli = Cli::try_parse_from([
-            "gemini_hook",
-            "--gemini-api-key",
-            "test-key",
-        ])
-        .expect("parse must succeed with only required args");
+        let cli = Cli::try_parse_from(["gemini_hook", "--gemini-api-key", "test-key"])
+            .expect("parse must succeed with only required args");
 
         assert_eq!(
             cli.fallback_model, "gemma-4-26b",

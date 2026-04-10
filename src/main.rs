@@ -197,7 +197,7 @@ fn classify_ureq_error(e: ureq::Error) -> GeminiError {
 }
 
 fn format_response(prompt: &str, text: &str, model: &str) -> String {
-    format!("## User:\n\n#Gemini:\n< model\n\n: {prompt}{text}\n\n{model}")
+    format!("## User:\n\n{prompt}\n\n## Gemini:\n\n>model: {model}\n\n{text}\n\n")
 }
 
 fn call_gemini_with_retry(
