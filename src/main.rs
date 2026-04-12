@@ -130,7 +130,7 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
         return;
     }
     let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
-    let filename = format!("{session_id}_{timestamp}.md");
+    let filename = format!("{timestamp}_{session_id}.md");
     let _ = fs::write(path.join(filename), message);
 }
 

@@ -92,7 +92,7 @@ fn save_log_creates_file_in_existing_dir() {
 }
 
 #[test]
-fn save_log_filename_starts_with_session_id() {
+fn save_log_filename_ends_with_session_id() {
     let dir = tempfile::tempdir().unwrap();
     save_log(dir.path().to_str().unwrap(), "mysession", "hello");
     let entry = std::fs::read_dir(dir.path())
@@ -101,7 +101,11 @@ fn save_log_filename_starts_with_session_id() {
         .unwrap()
         .unwrap();
     let filename = entry.file_name().into_string().unwrap();
-    assert!(filename.starts_with("mysession_"));
+    assert!(
+        filename.ends_with("_mysession.md"),
+        "Value mismatch! Current filename is: {}",
+        filename
+    );
 }
 
 #[test]
