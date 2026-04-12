@@ -134,27 +134,15 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
     let _ = fs::write(path.join(filename), message);
 }
 
-fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
-    let mut body = json!({
-        "contents": [{ "parts": [{ "text": prompt }] }]
-    });
-    if let Some(instruction) = system_instruction {
-        body["systemInstruction"] = json!({ "parts": [{ "text": instruction }] });
+fn call_gemini_with_retry(
+    model: &str,
+    fallback_model: &str,
+    call: impl Fn(&str) -> Result<String, GeminiError>,
+) -> Result<String, GeminiError> {
+    match call(model) {
+        Err(GeminiError::Overloaded) => call(fallback_model),
+        result => result,
     }
-    body
-}
-
-fn parse_gemini_response(response: &Value) -> Result<&str, &'static str> {
-    response["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .ok_or("unexpected response shape")
-}
-
-fn extract_api_error_message(body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-        .unwrap_or_else(|| body.to_string())
 }
 
 fn call_gemini(
@@ -184,6 +172,26 @@ fn call_gemini(
     Ok(format_response(prompt, text, model))
 }
 
+fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
+    let mut body = json!({
+        "contents": [{ "parts": [{ "text": prompt }] }]
+    });
+    if let Some(instruction) = system_instruction {
+        body["systemInstruction"] = json!({ "parts": [{ "text": instruction }] });
+    }
+    body
+}
+
+fn parse_gemini_response(response: &Value) -> Result<&str, &'static str> {
+    response["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .ok_or("unexpected response shape")
+}
+
+fn format_response(prompt: &str, text: &str, model: &str) -> String {
+    format!("## User:\n\n{prompt}\n\n## Gemini:\n\n>model: {model}\n\n{text}\n\n")
+}
+
 fn classify_ureq_error(e: ureq::Error) -> GeminiError {
     let ureq::Error::Status(code, resp) = e else {
         return GeminiError::Other(Box::new(e));
@@ -196,19 +204,11 @@ fn classify_ureq_error(e: ureq::Error) -> GeminiError {
     GeminiError::Other(format!("HTTP {code}: {message}").into())
 }
 
-fn format_response(prompt: &str, text: &str, model: &str) -> String {
-    format!("## User:\n\n{prompt}\n\n## Gemini:\n\n>model: {model}\n\n{text}\n\n")
-}
-
-fn call_gemini_with_retry(
-    model: &str,
-    fallback_model: &str,
-    call: impl Fn(&str) -> Result<String, GeminiError>,
-) -> Result<String, GeminiError> {
-    match call(model) {
-        Err(GeminiError::Overloaded) => call(fallback_model),
-        result => result,
-    }
+fn extract_api_error_message(body: &str) -> String {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+        .unwrap_or_else(|| body.to_string())
 }
 
 #[cfg(test)]
