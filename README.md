@@ -98,7 +98,8 @@ Gemini's feedback is for you, not for Claude.
 Example request:
 
 ```sh
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent" \
+# curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
