@@ -24,7 +24,7 @@ struct Cli {
     model: String,
 
     /// Fallback Gemini model to use when primary is overloaded
-    #[arg(long, default_value = "gemma-4-26b")]
+    #[arg(long, default_value = "gemini-3-flash-preview")]
     fallback_model: String,
 
     /// Directory to save log files (optional; skipped if path does not exist)
