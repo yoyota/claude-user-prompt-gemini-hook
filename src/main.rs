@@ -49,6 +49,12 @@ impl fmt::Display for GeminiError {
 
 impl Error for GeminiError {}
 
+impl GeminiError {
+    fn other(e: impl Into<Box<dyn Error>>) -> Self {
+        Self::Other(e.into())
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -195,14 +201,14 @@ fn format_response(text: &str, model: &str) -> String {
 
 fn classify_ureq_error(e: ureq::Error) -> GeminiError {
     let ureq::Error::Status(code, resp) = e else {
-        return GeminiError::Other(Box::new(e));
+        return GeminiError::other(e);
     };
     if code == 503 {
         return GeminiError::Overloaded;
     }
     let body = resp.into_string().unwrap_or_default();
     let message = extract_api_error_message(&body);
-    GeminiError::Other(format!("HTTP {code}: {message}").into())
+    GeminiError::other(format!("HTTP {code}: {message}"))
 }
 
 fn extract_api_error_message(body: &str) -> String {
