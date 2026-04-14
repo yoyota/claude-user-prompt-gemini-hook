@@ -68,9 +68,8 @@ fn main() {
         return;
     }
 
-    let hook: Value = match serde_json::from_str(&input) {
-        Ok(h) => h,
-        Err(_) => return,
+    let Ok(hook) = serde_json::from_str::<Value>(&input) else {
+        return;
     };
 
     let Some(prompt) = hook["prompt"].as_str() else {
@@ -92,10 +91,8 @@ fn main() {
             effective_prompt,
         )
     });
-    let (message, is_err) = match result {
-        Ok(s) => (s, false),
-        Err(e) => (e.to_string(), true),
-    };
+    let is_err = result.is_err();
+    let message = result.unwrap_or_else(|e| e.to_string());
     println!(
         "{}",
         json!({ "suppressOutput": false, "systemMessage": message })
@@ -157,10 +154,8 @@ fn call_gemini(
     system_instruction: Option<&str>,
     prompt: &str,
 ) -> Result<String, GeminiError> {
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
-        model
-    );
+    let url =
+        format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent");
 
     let body = build_request_body(prompt, system_instruction);
 
