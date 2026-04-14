@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::Local;
 use clap::Parser;
 use serde_json::{json, Value};
 use std::{
@@ -129,7 +129,7 @@ fn save_log(log_dir: &str, session_id: &str, message: &str) {
     if !path.is_dir() {
         return;
     }
-    let timestamp = Utc::now().format("%Y_%m_%d_%H_%M_%S");
+    let timestamp = Local::now().format("%Y-%m-%d_%H:%M:%S");
     let filename = format!("{timestamp}_{session_id}.md");
     let _ = fs::write(path.join(filename), message);
 }
@@ -166,10 +166,10 @@ fn call_gemini(
 
     let response: Value = http_response
         .into_json()
-        .map_err(|e| GeminiError::Other(e.into()))?;
-    let text = parse_gemini_response(&response).map_err(|e| GeminiError::Other(e.into()))?;
+        .map_err(|e| GeminiError::other(e))?;
+    let text = parse_gemini_response(&response).map_err(|e| GeminiError::other(e))?;
 
-    Ok(format_response(prompt, text, model))
+    Ok(format_response(text, model))
 }
 
 fn build_request_body(prompt: &str, system_instruction: Option<&str>) -> Value {
@@ -188,8 +188,9 @@ fn parse_gemini_response(response: &Value) -> Result<&str, &'static str> {
         .ok_or("unexpected response shape")
 }
 
-fn format_response(prompt: &str, text: &str, model: &str) -> String {
-    format!("## User:\n\n{prompt}\n\n## Gemini:\n\n>model: {model}\n\n{text}\n\n")
+fn format_response(text: &str, model: &str) -> String {
+    let date_now = Local::now().format("%Y-%m-%d");
+    format!("{text}\n\n## Connections\n\n- Model: [[{model}]]\n- Date: [[{date_now}]]\n")
 }
 
 fn classify_ureq_error(e: ureq::Error) -> GeminiError {

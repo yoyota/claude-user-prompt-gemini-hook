@@ -229,20 +229,17 @@ mod gemini_error {
 
 #[test]
 fn format_response_contains_prompt_text_and_model() {
-    let result = format_response("fix the bug", "Here is the fix.", "gemini-flash");
-    assert!(result.contains("fix the bug"));
+    let result = format_response("Here is the fix.", "gemini-flash");
     assert!(result.contains("Here is the fix."));
     assert!(result.contains("gemini-flash"));
 }
 
 #[test]
 fn format_response_sections_appear_in_order() {
-    let result = format_response("my prompt", "my answer", "my-model");
-    let prompt_pos = result.find("my prompt").unwrap();
+    let result = format_response("my answer", "my-model");
     let answer_pos = result.find("my answer").unwrap();
     let model_pos = result.find("my-model").unwrap();
-    assert!(prompt_pos < answer_pos);
-    assert!(model_pos < answer_pos);
+    assert!(answer_pos < model_pos);
 }
 
 mod call_gemini_with_retry_tests {
