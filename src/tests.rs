@@ -168,9 +168,8 @@ fn classify_slash_command_only_whitespace_after_returns_skip() {
 }
 
 #[test]
-fn classify_empty_string_returns_process_empty() {
-    // Edge case: empty string -> Process("") (no leading slash, existing behavior)
-    assert!(matches!(classify_prompt(""), PromptAction::Process("")));
+fn classify_empty_string_returns_skip() {
+    assert!(matches!(classify_prompt(""), PromptAction::Skip));
 }
 
 #[test]
@@ -189,6 +188,22 @@ fn classify_slash_command_long_param_returns_only_param_portion() {
 fn classify_bare_slash_returns_skip() {
     // Edge case: prompt is exactly "/" -> Skip
     assert!(matches!(classify_prompt("/"), PromptAction::Skip));
+}
+
+#[test]
+fn classify_single_mixed_case_word_returns_skip() {
+    assert!(matches!(classify_prompt("yes"), PromptAction::Skip));
+}
+
+#[test]
+fn classify_single_word_with_surrounding_spaces_returns_skip() {
+    assert!(matches!(classify_prompt("  ok  "), PromptAction::Skip));
+}
+
+#[test]
+fn classify_multi_word_non_slash_returns_process_regression() {
+    let prompt = "looks good to me";
+    assert!(matches!(classify_prompt(prompt), PromptAction::Process(p) if p == prompt));
 }
 
 // --- GeminiError ---

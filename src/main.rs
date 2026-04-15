@@ -113,7 +113,11 @@ enum PromptAction<'a> {
 
 fn classify_prompt(prompt: &str) -> PromptAction<'_> {
     if !prompt.starts_with('/') {
-        return PromptAction::Process(prompt);
+        return if prompt.trim().contains(char::is_whitespace) {
+            PromptAction::Process(prompt)
+        } else {
+            PromptAction::Skip
+        };
     }
     // Find the first whitespace after the command token
     let Some(pos) = prompt.find(char::is_whitespace) else {
