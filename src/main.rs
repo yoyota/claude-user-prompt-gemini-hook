@@ -55,31 +55,33 @@ impl GeminiError {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
 
     let system_instruction = cli
         .system_instruction_file
         .as_deref()
-        .and_then(|path| fs::read_to_string(path).ok());
+        .map(|path| {
+            fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read system instruction file: {e}"))
+        })
+        .transpose()?;
 
     let mut input = String::new();
-    if io::stdin().read_to_string(&mut input).is_err() {
-        return;
-    }
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|e| format!("Failed to read from stdin: {e}"))?;
 
-    let Ok(hook) = serde_json::from_str::<Value>(&input) else {
-        return;
-    };
+    let hook: Value =
+        serde_json::from_str(&input).map_err(|e| format!("Failed to parse stdin as JSON: {e}"))?;
 
     let Some(prompt) = hook["prompt"].as_str() else {
-        eprintln!("Missing or non-string prompt field");
-        return;
+        return Err("Missing or non-string prompt field".into());
     };
     let prompt = prompt.trim();
 
     let effective_prompt = match classify_prompt(prompt) {
-        PromptAction::Skip => return,
+        PromptAction::Skip => return Ok(()),
         PromptAction::Process(p) => p,
     };
 
@@ -93,17 +95,15 @@ fn main() {
     });
     let is_err = result.is_err();
     let message = result.unwrap_or_else(|e| e.to_string());
-    println!(
-        "{}",
-        json!({ "suppressOutput": false, "systemMessage": message })
-    );
+    println!("{}", json!({  "systemMessage": message }));
     if let (Some(log_dir), Some(session_id)) = (cli.log_dir.as_deref(), hook["session_id"].as_str())
     {
-        save_log(log_dir, session_id, &message);
+        save_log(log_dir, session_id, &message)?;
     }
     if is_err {
         process::exit(1);
     }
+    Ok(())
 }
 
 enum PromptAction<'a> {
@@ -113,7 +113,7 @@ enum PromptAction<'a> {
 
 fn classify_prompt(prompt: &str) -> PromptAction<'_> {
     if !prompt.starts_with('/') {
-        return if prompt.trim().contains(char::is_whitespace) {
+        return if prompt.contains(char::is_whitespace) {
             PromptAction::Process(prompt)
         } else {
             PromptAction::Skip
@@ -131,14 +131,18 @@ fn classify_prompt(prompt: &str) -> PromptAction<'_> {
     }
 }
 
-fn save_log(log_dir: &str, session_id: &str, message: &str) {
+fn save_log(log_dir: &str, session_id: &str, message: &str) -> Result<(), Box<dyn Error>> {
     let path = Path::new(log_dir);
-    if !path.is_dir() {
-        return;
+    if !path.exists() {
+        return Ok(());
     }
-    let timestamp = Local::now().format("%Y-%m-%d_%H:%M:%S");
+    if !path.is_dir() {
+        return Err(format!("log_dir is not a directory: {log_dir}").into());
+    }
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
     let filename = format!("{timestamp}_{session_id}.md");
-    let _ = fs::write(path.join(filename), message);
+    fs::write(path.join(filename), message).map_err(|e| format!("Failed to write log: {e}"))?;
+    Ok(())
 }
 
 fn call_gemini_with_retry(
@@ -169,10 +173,8 @@ fn call_gemini(
         .send_json(body)
         .map_err(classify_ureq_error)?;
 
-    let response: Value = http_response
-        .into_json()
-        .map_err(|e| GeminiError::other(e))?;
-    let text = parse_gemini_response(&response).map_err(|e| GeminiError::other(e))?;
+    let response: Value = http_response.into_json().map_err(GeminiError::other)?;
+    let text = parse_gemini_response(&response).map_err(GeminiError::other)?;
 
     Ok(format_response(text, model))
 }
