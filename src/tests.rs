@@ -80,13 +80,13 @@ fn extract_non_json_body_returned_verbatim() {
 
 #[test]
 fn save_log_nonexistent_dir_is_noop() {
-    save_log("/tmp/nonexistent_dir_xyz_123456", "sess1", "hello");
+    save_log("/tmp/nonexistent_dir_xyz_123456", "sess1", "hello").unwrap();
 }
 
 #[test]
 fn save_log_creates_file_in_existing_dir() {
     let dir = tempfile::tempdir().unwrap();
-    save_log(dir.path().to_str().unwrap(), "sess1", "hello");
+    save_log(dir.path().to_str().unwrap(), "sess1", "hello").unwrap();
     let entries: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
     assert_eq!(entries.len(), 1);
 }
@@ -94,7 +94,7 @@ fn save_log_creates_file_in_existing_dir() {
 #[test]
 fn save_log_filename_ends_with_session_id() {
     let dir = tempfile::tempdir().unwrap();
-    save_log(dir.path().to_str().unwrap(), "mysession", "hello");
+    save_log(dir.path().to_str().unwrap(), "mysession", "hello").unwrap();
     let entry = std::fs::read_dir(dir.path())
         .unwrap()
         .next()
@@ -111,7 +111,7 @@ fn save_log_filename_ends_with_session_id() {
 #[test]
 fn save_log_file_content_matches_message() {
     let dir = tempfile::tempdir().unwrap();
-    save_log(dir.path().to_str().unwrap(), "sess1", "my log content");
+    save_log(dir.path().to_str().unwrap(), "sess1", "my log content").unwrap();
     let entry = std::fs::read_dir(dir.path())
         .unwrap()
         .next()
@@ -352,6 +352,140 @@ mod call_gemini_with_retry_tests {
         assert_eq!(
             cli.fallback_model, "gemini-3-flash-preview",
             "--fallback-model default must be \"gemini-3-flash-preview\""
+        );
+    }
+}
+
+// --- subprocess integration tests ---
+
+mod stdin_and_log_dir_subprocess {
+    // Construct the path to the compiled binary at runtime.
+    // CARGO_MANIFEST_DIR is available at compile time even for unit tests.
+    fn bin_path() -> std::path::PathBuf {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        std::path::Path::new(manifest_dir)
+            .join("target")
+            .join("debug")
+            .join("gemini_hook")
+    }
+
+    #[test]
+    fn invalid_json_on_stdin_exits_zero_stderr_has_parse_failure_stdout_empty() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        let bin = bin_path();
+        let mut child = Command::new(&bin)
+            .args(["--gemini-api-key", "dummy"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn {}: {e}", bin.display()));
+
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"not json")
+            .expect("failed to write to stdin");
+
+        let output = child.wait_with_output().expect("failed to wait for child");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected exit code 0, got {:?}; stderr: {stderr}",
+            output.status.code()
+        );
+        assert!(
+            stdout.is_empty(),
+            "expected empty stdout, got: {stdout}"
+        );
+        assert!(
+            stderr.to_lowercase().contains("json"),
+            "expected stderr to contain a JSON parse failure message, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn empty_stdin_exits_zero_stderr_has_parse_failure_stdout_empty() {
+        use std::process::{Command, Stdio};
+
+        let bin = bin_path();
+        let output = Command::new(&bin)
+            .args(["--gemini-api-key", "dummy"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run {}: {e}", bin.display()));
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected exit code 0, got {:?}; stderr: {stderr}",
+            output.status.code()
+        );
+        assert!(
+            stdout.is_empty(),
+            "expected empty stdout, got: {stdout}"
+        );
+        assert!(
+            stderr.to_lowercase().contains("json"),
+            "expected stderr to contain a JSON parse failure message, got: {stderr}"
+        );
+    }
+
+    #[test]
+    fn log_dir_is_existing_file_exits_nonzero_stderr_contains_path() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        // Create a temporary regular file to use as the (invalid) log-dir path.
+        let tmp_file = tempfile::NamedTempFile::new().expect("failed to create temp file");
+        let log_dir_path = tmp_file.path().to_str().unwrap().to_string();
+
+        // Supply valid JSON with a prompt that classify_prompt will route to Process
+        // (contains whitespace) and a session_id so save_log is called.
+        let payload = r#"{"prompt": "fix the bug", "session_id": "test-session-123"}"#;
+
+        let bin = bin_path();
+        let mut child = Command::new(&bin)
+            .args([
+                "--gemini-api-key",
+                "dummy",
+                "--log-dir",
+                &log_dir_path,
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|e| panic!("failed to spawn {}: {e}", bin.display()));
+
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(payload.as_bytes())
+            .expect("failed to write to stdin");
+
+        let output = child.wait_with_output().expect("failed to wait for child");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            !output.status.success(),
+            "expected non-zero exit code when log_dir is a file, got exit 0; stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains(&log_dir_path),
+            "expected stderr to contain the bad log_dir path {log_dir_path:?}, got: {stderr}"
         );
     }
 }
