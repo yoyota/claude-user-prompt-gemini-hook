@@ -6,7 +6,6 @@ use std::{
     fmt, fs,
     io::{self, Read},
     path::Path,
-    process,
 };
 
 #[derive(Parser)]
@@ -61,19 +60,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let system_instruction = cli
         .system_instruction_file
         .as_deref()
-        .map(|path| {
-            fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read system instruction file: {e}"))
-        })
+        .map(|path| fs::read_to_string(path))
         .transpose()?;
 
     let mut input = String::new();
-    io::stdin()
-        .read_to_string(&mut input)
-        .map_err(|e| format!("Failed to read from stdin: {e}"))?;
+    io::stdin().read_to_string(&mut input)?;
 
-    let hook: Value =
-        serde_json::from_str(&input).map_err(|e| format!("Failed to parse stdin as JSON: {e}"))?;
+    let hook: Value = serde_json::from_str(&input)?;
 
     let Some(prompt) = hook["prompt"].as_str() else {
         return Err("Missing or non-string prompt field".into());
@@ -85,24 +78,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         PromptAction::Process(p) => p,
     };
 
-    let result = call_gemini_with_retry(&cli.model, &cli.fallback_model, |model| {
+    let message = call_gemini_with_retry(&cli.model, &cli.fallback_model, |model| {
         call_gemini(
             &cli.gemini_api_key,
             model,
             system_instruction.as_deref(),
             effective_prompt,
         )
-    });
-    let is_err = result.is_err();
-    let message = result.unwrap_or_else(|e| e.to_string());
-    println!("{}", json!({  "systemMessage": message }));
+    })?;
     if let (Some(log_dir), Some(session_id)) = (cli.log_dir.as_deref(), hook["session_id"].as_str())
     {
         save_log(log_dir, session_id, &message)?;
     }
-    if is_err {
-        process::exit(1);
-    }
+    println!("{}", json!({  "systemMessage": message }));
     Ok(())
 }
 
@@ -133,12 +121,6 @@ fn classify_prompt(prompt: &str) -> PromptAction<'_> {
 
 fn save_log(log_dir: &str, session_id: &str, message: &str) -> Result<(), Box<dyn Error>> {
     let path = Path::new(log_dir);
-    if !path.exists() {
-        return Ok(());
-    }
-    if !path.is_dir() {
-        return Err(format!("log_dir is not a directory: {log_dir}").into());
-    }
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
     let filename = format!("{timestamp}_{session_id}.md");
     fs::write(path.join(filename), message).map_err(|e| format!("Failed to write log: {e}"))?;
