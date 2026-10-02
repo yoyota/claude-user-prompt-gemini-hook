@@ -1,5 +1,5 @@
 use chrono::Local;
-use clap::Parser;
+use clap::{error::ErrorKind, Parser};
 use serde_json::{json, Value};
 use std::{
     error::Error,
@@ -16,7 +16,7 @@ struct Cli {
 
     /// Gemini API key
     #[arg(long, env = "GEMINI_API_KEY")]
-    gemini_api_key: String,
+    gemini_api_key: Option<String>,
 
     /// Gemini model to use
     #[arg(long, default_value = "gemini-3.1-flash-lite-preview")]
@@ -54,33 +54,73 @@ impl GeminiError {
     }
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let cli = Cli::parse();
+/// A hook failure must never block the user's prompt. Claude Code treats exit
+/// code 2 as "block" (clap's usage-error code), so every error is reported as a
+/// non-blocking `systemMessage` and the process always exits 0.
+fn main() {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) => {
+            e.exit()
+        }
+        Err(e) => return report_error(&usage_error_summary(&e)),
+    };
+    if let Err(e) = run(&cli) {
+        report_error(&e.to_string());
+    }
+}
 
-    let system_instruction = cli
-        .system_instruction_file
-        .as_deref()
-        .map(|path| fs::read_to_string(path))
-        .transpose()?;
+/// clap renders a usage error as "error: ..." followed by usage and hint lines;
+/// keep only the first non-blank line, without the "error: " prefix.
+fn usage_error_summary(e: &clap::Error) -> String {
+    let rendered = e.to_string();
+    let line = rendered
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or(&rendered);
+    line.trim_start_matches("error: ").to_string()
+}
 
+fn report_error(message: &str) {
+    eprintln!("gemini_hook: {message}");
+    let notice = format!("gemini_hook failed, prompt sent without proofreading: {message}");
+    println!("{}", json!({ "systemMessage": notice }));
+}
+
+fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
-    let hook: Value = serde_json::from_str(&input)?;
+    let hook: Value =
+        serde_json::from_str(&input).map_err(|e| format!("invalid hook JSON on stdin: {e}"))?;
 
-    let Some(prompt) = hook["prompt"].as_str() else {
-        return Err("Missing or non-string prompt field".into());
-    };
-    let prompt = prompt.trim();
+    let prompt = hook["prompt"]
+        .as_str()
+        .ok_or("missing or non-string prompt field")?;
 
     let effective_prompt = match classify_prompt(prompt) {
         PromptAction::Skip => return Ok(()),
         PromptAction::Process(p) => p,
     };
 
+    let api_key = cli
+        .gemini_api_key
+        .as_deref()
+        .filter(|k| !k.is_empty())
+        .ok_or("GEMINI_API_KEY is not set (env var or --gemini-api-key)")?;
+
+    let system_instruction = cli
+        .system_instruction_file
+        .as_deref()
+        .map(|path| {
+            fs::read_to_string(path)
+                .map_err(|e| format!("cannot read system instruction file {path}: {e}"))
+        })
+        .transpose()?;
+
     let message = call_gemini_with_retry(&cli.model, &cli.fallback_model, |model| {
         call_gemini(
-            &cli.gemini_api_key,
+            api_key,
             model,
             system_instruction.as_deref(),
             effective_prompt,
@@ -90,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     {
         save_log(log_dir, session_id, &message)?;
     }
-    println!("{}", json!({  "systemMessage": message }));
+    println!("{}", json!({ "systemMessage": message }));
     Ok(())
 }
 
@@ -100,6 +140,7 @@ enum PromptAction<'a> {
 }
 
 fn classify_prompt(prompt: &str) -> PromptAction<'_> {
+    let prompt = prompt.trim();
     if !prompt.starts_with('/') {
         return if prompt.contains(char::is_whitespace) {
             PromptAction::Process(prompt)
@@ -121,9 +162,13 @@ fn classify_prompt(prompt: &str) -> PromptAction<'_> {
 
 fn save_log(log_dir: &str, session_id: &str, message: &str) -> Result<(), Box<dyn Error>> {
     let path = Path::new(log_dir);
+    if !path.exists() {
+        return Ok(());
+    }
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
-    let filename = format!("{timestamp}_{session_id}.md");
-    fs::write(path.join(filename), message).map_err(|e| format!("Failed to write log: {e}"))?;
+    let file = path.join(format!("{timestamp}_{session_id}.md"));
+    fs::write(&file, message)
+        .map_err(|e| format!("failed to write log to {}: {e}", file.display()))?;
     Ok(())
 }
 
