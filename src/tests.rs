@@ -342,16 +342,13 @@ mod call_gemini_with_retry_tests {
     }
 
     #[test]
-    fn default_fallback_model_in_cli_is_gemini_3_flash_preview() {
-        // The --fallback-model CLI argument must default to "gemini-3-flash-preview".
-        // We verify the default by parsing an args list that omits --fallback-model.
+    fn default_models_in_cli() {
+        // --model defaults to "gemini-3.8-flash" and --fallback-model to "gemini-3.5-flash-lite".
         // Cli::try_parse_from is used to avoid process::exit on parse failure.
         let cli = Cli::try_parse_from(["gemini_hook", "--gemini-api-key", "test-key"])
             .expect("parse must succeed with only required args");
 
-        assert_eq!(
-            cli.fallback_model, "gemini-3-flash-preview",
-            "--fallback-model default must be \"gemini-3-flash-preview\""
-        );
+        assert_eq!(cli.model, "gemini-3.8-flash");
+        assert_eq!(cli.fallback_model, "gemini-3.5-flash-lite");
     }
 }

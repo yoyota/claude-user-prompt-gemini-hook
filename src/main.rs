@@ -19,11 +19,11 @@ struct Cli {
     gemini_api_key: Option<String>,
 
     /// Gemini model to use
-    #[arg(long, default_value = "gemini-3.1-flash-lite-preview")]
+    #[arg(long, default_value = "gemini-3.8-flash")]
     model: String,
 
     /// Fallback Gemini model to use when primary is overloaded
-    #[arg(long, default_value = "gemini-3-flash-preview")]
+    #[arg(long, default_value = "gemini-3.5-flash-lite")]
     fallback_model: String,
 
     /// Directory to save log files (optional; skipped if path does not exist)

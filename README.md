@@ -91,15 +91,15 @@ Gemini's feedback is for you, not for Claude.
 
 ## Gemini API
 
-- **Model**: `gemini-3.1-flash-lite-preview` (default, configurable via `--model`)
+- **Model**: `gemini-3.8-flash` (default, configurable via `--model`)
+- **Fallback model**: `gemini-3.5-flash-lite` — used when the primary returns 503 overloaded (configurable via `--fallback-model`)
 - **Endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 - **Auth**: `x-goog-api-key` header with `$GEMINI_API_KEY`
 
 Example request:
 
 ```sh
-# curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent" \
-curl "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-31b-it:generateContent" \
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent" \
   -H "x-goog-api-key: $GEMINI_API_KEY" \
   -H "Content-Type: application/json" \
   -X POST \
@@ -125,7 +125,8 @@ A single binary `gemini_hook` handles the `UserPromptSubmit` hook event.
 | Flag                        | Env              | Default                         | Description                                     |
 | --------------------------- | ---------------- | ------------------------------- | ----------------------------------------------- |
 | `--gemini-api-key`          | `GEMINI_API_KEY` | (required)                      | Gemini API key                                  |
-| `--model`                   | —                | `gemini-3.1-flash-lite-preview` | Gemini model to use                             |
+| `--model`                   | —                | `gemini-3.8-flash`              | Gemini model to use                             |
+| `--fallback-model`          | —                | `gemini-3.5-flash-lite`         | Model to retry with when the primary is overloaded |
 | `--system-instruction-file` | —                | (none)                          | Path to a file with a custom system instruction |
 
 ## Installation
@@ -134,7 +135,7 @@ Use `install.sh` to build, install the binary, and configure Claude Code in one 
 
 ```sh
 export GEMINI_API_KEY=your_api_key_here
-./install.sh --system-instruction-file /path/to/instruction.txt [--model gemini-3.1-flash-lite-preview]
+./install.sh --system-instruction-file /path/to/instruction.txt [--model gemini-3.8-flash] [--fallback-model gemini-3.5-flash-lite]
 ```
 
 The script:
@@ -157,7 +158,7 @@ Requires: `cargo`, `jq`
           {
             "type": "command",
             "statusMessage": "Proofreading...",
-            "command": "~/.local/bin/gemini_hook --system-instruction-file /path/to/instruction.txt --model gemini-3.1-flash-lite-preview"
+            "command": "~/.local/bin/gemini_hook --system-instruction-file /path/to/instruction.txt --model gemini-3.8-flash --fallback-model gemini-3.5-flash-lite"
           }
         ]
       }
